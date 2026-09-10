@@ -50,24 +50,67 @@ def build_stats(job: dict, rows: list) -> dict:
     }
 
 
+def _enrich(row: dict) -> dict:
+    """Add human-friendly derived fields to an index row."""
+    from . import classify
+    ts = row.get("ts")
+    t = row.get("type") or ""
+    urls = row.get("urls") or []
+    return {
+        **row,
+        "date_utc": datetime.fromtimestamp(ts, tz=timezone.utc).isoformat() if ts else "",
+        "type_label": TYPE_LABELS.get(t, t),
+        "size_human": _fmt_size(row.get("size") or 0),
+        "links_count": len(urls),
+        "has_media": t in ("photo", "video", "video_note", "animation", "document", "audio", "voice", "sticker"),
+        "suggested_topic": classify.classify_to_topic(t, row.get("preview") or "", None),
+    }
+
+
 def to_json(job: dict, rows: list, stats: dict) -> str:
+    total = max(stats["total_messages"], 1)
+    by_type_detail = [
+        {"type": t, "label": TYPE_LABELS.get(t, t), "count": n,
+         "percent": round(n / total * 100, 2)}
+        for t, n in sorted(stats["by_type"].items(), key=lambda kv: -kv[1])
+    ]
+    top_files = [{**f, "size_human": _fmt_size(f["size"])} for f in stats["top_files"]]
+    top_links = [{"url": u, "count": n} for u, n in stats["top_links"]]
+    top_senders = [{"sender": s, "messages": n} for s, n in stats["top_senders"]]
     return json.dumps({
+        "generated_by": "Teleporter",
+        "generated_at_utc": datetime.fromtimestamp(stats["generated_at"], tz=timezone.utc).isoformat(),
         "job": {k: job.get(k) for k in ("id", "kind", "status", "total", "copied", "skipped", "failed")},
         "source": job.get("source"),
-        "stats": stats,
-        "messages": rows,
+        "stats": {
+            "total_messages": stats["total_messages"],
+            "total_size_bytes": stats["total_size_bytes"],
+            "total_size_human": _fmt_size(stats["total_size_bytes"]),
+            "unique_links": stats["unique_links"],
+            "date_range_utc": [
+                datetime.fromtimestamp(d, tz=timezone.utc).isoformat() if d else None
+                for d in stats["date_range"]
+            ],
+            "by_type": by_type_detail,
+            "top_links": top_links,
+            "top_senders": top_senders,
+            "top_files": top_files,
+            "activity_by_month": [{"month": m, "messages": n} for m, n in stats["activity_by_month"]],
+        },
+        "messages": [_enrich(r) for r in rows],
     }, indent=2, ensure_ascii=False, default=str)
 
 
 def to_csv(rows: list) -> str:
     buf = io.StringIO()
     w = csv.writer(buf)
-    w.writerow(["message_id", "date_utc", "type", "sender", "size_bytes", "urls", "preview"])
+    w.writerow(["message_id", "date_utc", "type", "type_label", "sender", "size_bytes",
+                "size_human", "has_media", "links_count", "urls", "suggested_topic", "preview"])
     for r in rows:
-        ts = r.get("ts")
-        date = datetime.fromtimestamp(ts, tz=timezone.utc).isoformat() if ts else ""
-        w.writerow([r["msg_id"], date, r["type"], r.get("sender", ""), r.get("size", 0),
-                    " | ".join(r.get("urls") or []), r.get("preview", "")])
+        e = _enrich(r)
+        w.writerow([e["msg_id"], e["date_utc"], e["type"], e["type_label"], e.get("sender", ""),
+                    e.get("size", 0), e["size_human"], e["has_media"], e["links_count"],
+                    " | ".join(e.get("urls") or []), e["suggested_topic"], e.get("preview", "")])
     return buf.getvalue()
 
 

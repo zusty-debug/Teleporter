@@ -321,3 +321,9 @@ table.hist tr:hover td { background: rgba(42,171,238,.04); }
 }
 .connect-banner.ok { border-color: var(--ok); background: rgba(62,207,142,.07); }
 #conn-badge { cursor: pointer; }
+
+/* cleanup countdown note */
+.cleanup-note {
+  margin: 4px 0 10px; padding: 9px 14px; border-radius: 10px; font-size: 12.5px;
+  background: rgba(245, 185, 66, .1); border: 1px dashed rgba(245, 185, 66, .5); color: var(--warn);
+}

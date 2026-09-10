@@ -702,11 +702,18 @@ function renderJob() {
     controls = `<button class="btn primary" id="jb-resume">↻ Retry / Resume</button>
                 <button class="btn danger" id="jb-delete">🗑 Delete job</button>`;
   }
+  const sep = (u) => u + (S.token ? (u.includes("?") ? "&" : "?") + "token=" + encodeURIComponent(S.token) : "");
   let reportLinks = "";
-  if (spec.index && (j.status === "done" || j.status === "awaiting_mapping" || j.processed > 0)) {
-    reportLinks = `<a class="btn ok" href="/api/jobs/${j.id}/report.html${S.token ? "?token=" + encodeURIComponent(S.token) : ""}" target="_blank" rel="noopener">📄 Open HTML report</a>
-      <a class="btn small" href="/api/jobs/${j.id}/report.json${S.token ? "?token=" + encodeURIComponent(S.token) : ""}">JSON</a>
-      <a class="btn small" href="/api/jobs/${j.id}/report.csv${S.token ? "?token=" + encodeURIComponent(S.token) : ""}">CSV</a>`;
+  if (spec.index && j.processed > 0) {
+    reportLinks = `<a class="btn ok" href="${sep(`/api/jobs/${j.id}/report.html`)}" target="_blank" rel="noopener">📄 Open HTML report</a>
+      <a class="btn" href="${sep(`/api/jobs/${j.id}/report.html?download=1`)}">⬇ Download HTML</a>
+      <a class="btn small" href="${sep(`/api/jobs/${j.id}/report.json`)}">JSON</a>
+      <a class="btn small" href="${sep(`/api/jobs/${j.id}/report.csv`)}">CSV</a>`;
+  }
+  let cleanupBanner = "";
+  if (j.cleanup_at && spec.index && j.processed > 0) {
+    const minsLeft = Math.max(0, Math.round((j.cleanup_at * 1000 - Date.now()) / 60000));
+    cleanupBanner = `<div class="cleanup-note">🧹 To save space, this job and its exports are auto-deleted in ~${minsLeft} min — download your HTML / JSON / CSV now.</div>`;
   }
 
   const barCls = indet ? "progress-outer indet" : "progress-outer";
@@ -725,6 +732,7 @@ function renderJob() {
         <span class="status-pill st-${j.status}">${esc(STATUS_LABEL[j.status] || j.status)}</span>
       </div>
       ${j.error ? `<p class="error">⚠ ${esc(j.error)}</p>` : ""}
+      ${cleanupBanner}
       <div class="${barCls}"><div class="${innerCls}" style="width:${indet ? 0 : pct}%"></div></div>
       <div class="muted small">${progressNote}${rateTxt}${beatHint ? ` · <span style="color:var(--accent)">${esc(beatHint)}</span>` : ""}</div>
       <div class="stats-grid">

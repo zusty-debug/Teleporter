@@ -64,7 +64,25 @@ async def connect() -> aiosqlite.Connection:
     conn = await aiosqlite.connect(DB_PATH)
     conn.row_factory = aiosqlite.Row
     await conn.execute("PRAGMA journal_mode=WAL")
+    await conn.execute("PRAGMA busy_timeout=15000")
     return conn
+
+
+async def _retry(fn, tries: int = 4, wait: float = 1.5):
+    """Re-run a DB write when SQLite reports a transient lock."""
+    import asyncio
+    last = None
+    for i in range(tries):
+        try:
+            return await fn()
+        except Exception as e:  # noqa: BLE001
+            msg = str(e).lower()
+            if "locked" in msg or "busy" in msg:
+                last = e
+                await asyncio.sleep(wait * (i + 1))
+                continue
+            raise
+    raise last
 
 
 async def init_db() -> None:
@@ -150,12 +168,15 @@ async def update_job(job_id: str, **fields: Any) -> None:
             fields[k + "_json"] = json.dumps(fields.pop(k))
     fields["updated_at"] = time.time()
     keys = ", ".join(f"{k}=?" for k in fields)
-    conn = await connect()
-    try:
-        await conn.execute(f"UPDATE jobs SET {keys} WHERE id=?", (*fields.values(), job_id))
-        await conn.commit()
-    finally:
-        await conn.close()
+
+    async def _do():
+        conn = await connect()
+        try:
+            await conn.execute(f"UPDATE jobs SET {keys} WHERE id=?", (*fields.values(), job_id))
+            await conn.commit()
+        finally:
+            await conn.close()
+    await _retry(_do)
 
 
 async def get_job(job_id: str) -> Optional[dict]:
@@ -182,15 +203,18 @@ async def list_jobs(limit: int = 100) -> list:
 async def mark_copied(job_id: str, msg_ids: list) -> None:
     if not msg_ids:
         return
-    conn = await connect()
-    try:
-        await conn.executemany(
-            "INSERT OR IGNORE INTO copied(job_id,msg_id) VALUES(?,?)",
-            [(job_id, m) for m in msg_ids],
-        )
-        await conn.commit()
-    finally:
-        await conn.close()
+
+    async def _do():
+        conn = await connect()
+        try:
+            await conn.executemany(
+                "INSERT OR IGNORE INTO copied(job_id,msg_id) VALUES(?,?)",
+                [(job_id, m) for m in msg_ids],
+            )
+            await conn.commit()
+        finally:
+            await conn.close()
+    await _retry(_do)
 
 
 async def copied_set(job_id: str) -> set:
@@ -206,17 +230,20 @@ async def copied_set(job_id: str) -> set:
 async def insert_index_rows(job_id: str, rows: list) -> None:
     if not rows:
         return
-    conn = await connect()
-    try:
-        await conn.executemany(
-            """INSERT OR IGNORE INTO index_rows(job_id,msg_id,ts,type,sender,size,urls,preview)
-               VALUES(?,?,?,?,?,?,?,?)""",
-            [(job_id, r["msg_id"], r.get("ts"), r.get("type"), r.get("sender"),
-              r.get("size", 0), json.dumps(r.get("urls", [])), r.get("preview", "")) for r in rows],
-        )
-        await conn.commit()
-    finally:
-        await conn.close()
+
+    async def _do():
+        conn = await connect()
+        try:
+            await conn.executemany(
+                """INSERT OR IGNORE INTO index_rows(job_id,msg_id,ts,type,sender,size,urls,preview)
+                   VALUES(?,?,?,?,?,?,?,?)""",
+                [(job_id, r["msg_id"], r.get("ts"), r.get("type"), r.get("sender"),
+                  r.get("size", 0), json.dumps(r.get("urls", [])), r.get("preview", "")) for r in rows],
+            )
+            await conn.commit()
+        finally:
+            await conn.close()
+    await _retry(_do)
 
 
 async def get_index_rows(job_id: str) -> list:
@@ -262,15 +289,17 @@ async def delete_job_data(job_id: str) -> None:
 
 # ---------------------------------------------------------------- logs
 async def add_log(job_id: str, message: str, level: str = "info") -> None:
-    conn = await connect()
-    try:
-        await conn.execute(
-            "INSERT INTO logs(job_id,level,message,ts) VALUES(?,?,?,?)",
-            (job_id, level, message, time.time()),
-        )
-        await conn.commit()
-    finally:
-        await conn.close()
+    async def _do():
+        conn = await connect()
+        try:
+            await conn.execute(
+                "INSERT INTO logs(job_id,level,message,ts) VALUES(?,?,?,?)",
+                (job_id, level, message, time.time()),
+            )
+            await conn.commit()
+        finally:
+            await conn.close()
+    await _retry(_do)
 
 
 async def get_logs(job_id: str, limit: int = 200) -> list:

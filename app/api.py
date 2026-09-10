@@ -242,6 +242,8 @@ async def get_job(job_id: str, request: Request):
     job["running"] = job_id in engine.engines
     job["kind_label"] = engine.KINDS.get(job["kind"], {}).get("label", job["kind"])
     job["logs"] = await db.get_logs(job_id, limit=120)
+    if job["status"] in ("done", "failed", "canceled"):
+        job["cleanup_at"] = job["updated_at"] + 1800  # 30-minute retention
     if job["status"] == "awaiting_mapping":
         job["type_counts"] = await db.index_type_counts(job_id)
     return {"job": job}
@@ -257,9 +259,19 @@ async def _active_engine(job_id: str) -> engine.Engine:
 @router.post("/jobs/{job_id}/pause")
 async def pause_job(job_id: str, request: Request):
     _guarded(request)
-    eng = await _active_engine(job_id)
-    eng.request_pause()
-    return {"ok": True}
+    eng = engine.engines.get(job_id)
+    if eng is not None:
+        eng.request_pause()
+        return {"ok": True}
+    # Engine already gone (crash/restart) but job still 'active' → force pause state
+    job = await db.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if job["status"] in engine.ACTIVE:
+        await db.update_job(job_id, status="paused")
+        await db.add_log(job_id, "Paused (engine was not running — resume continues from checkpoint).", "warn")
+        return {"ok": True}
+    raise HTTPException(status_code=409, detail="This job is not running.")
 
 
 @router.post("/jobs/{job_id}/cancel")
@@ -333,10 +345,14 @@ async def _report_data(job_id: str):
 
 
 @router.get("/jobs/{job_id}/report.html", response_class=HTMLResponse)
-async def report_html(job_id: str, request: Request):
+async def report_html(job_id: str, request: Request, download: int = 0):
     _guarded(request)
     job, rows, stats = await _report_data(job_id)
-    return report.to_html(job, rows, stats)
+    html = report.to_html(job, rows, stats)
+    headers = {}
+    if download:
+        headers["Content-Disposition"] = f'attachment; filename="teleporter-report-{job_id}.html"'
+    return HTMLResponse(content=html, headers=headers)
 
 
 @router.get("/jobs/{job_id}/report.json")

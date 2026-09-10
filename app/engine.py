@@ -80,6 +80,22 @@ class Engine:
     def request_cancel(self) -> None:
         self.stop_flag = "cancel"
 
+    async def _safety_net(self) -> None:
+        """If the engine exits while the DB still says active, mark the job failed
+        with a helpful message — a job must never sit as a silent zombie."""
+        try:
+            job = await db.get_job(self.job_id)
+            if job and job["status"] in ACTIVE:
+                await db.update_job(
+                    self.job_id, status="failed",
+                    error="Engine stopped unexpectedly (server restart or crash). "
+                          "Press Resume — it continues from the saved checkpoint.")
+                await _log(self.job_id,
+                           "Engine stopped unexpectedly — marked as Failed. "
+                           "Use Resume to continue from the last checkpoint.", "error")
+        except Exception:  # noqa: BLE001
+            pass
+
     async def run_index(self) -> None:
         try:
             await db.update_job(self.job_id, status="indexing", phase="index")
@@ -91,6 +107,7 @@ class Engine:
             await db.update_job(self.job_id, status="failed", error=str(e))
             await _log(self.job_id, f"Indexing failed: {e}", "error")
         finally:
+            await self._safety_net()
             engines.pop(self.job_id, None)
 
     async def run_migrate(self) -> None:
@@ -104,6 +121,7 @@ class Engine:
             await db.update_job(self.job_id, status="failed", error=str(e))
             await _log(self.job_id, f"Migration failed: {e}", "error")
         finally:
+            await self._safety_net()
             engines.pop(self.job_id, None)
 
     async def _check_stop(self) -> bool:
@@ -121,20 +139,27 @@ class Engine:
     # ------------------------------------------------------------------ counting
 
     async def _history_page(self, client, chat_id, offset_id: int, size: int = 100) -> list:
-        """One page of history, retrying through FloodWait errors."""
-        for attempt in (1, 2):
+        """One page of history. FloodWaits are slept through and retried forever —
+        a big channel scan must survive Telegram's read throttling, not die on it."""
+        attempt = 0
+        while True:
             try:
                 page = []
                 async for m in client.get_chat_history(chat_id, limit=size, offset_id=offset_id):
                     page.append(m)
                 return page
             except FloodWait as e:
+                attempt += 1
                 secs = min(int(getattr(e, "value", None) or getattr(e, "seconds", 30)), 600)
-                await _log(self.job_id, f"Flood wait {secs}s from Telegram — sleeping…", "warn")
+                await _log(self.job_id,
+                           f"Telegram flood limit on read — sleeping {secs}s, then continuing "
+                           f"(wait #{attempt}). Progress is safe.", "warn")
                 await asyncio.sleep(secs + 1)
-                if attempt == 2:
+            except Exception:  # noqa: BLE001
+                attempt += 1
+                if attempt > 3:
                     raise
-        return []
+                await asyncio.sleep(3)
 
     async def _pages(self, client, chat_id, offset_id: int, page_size: int = 100):
         """Yield pages of messages older than offset_id, newest-first per page."""
@@ -184,6 +209,7 @@ class Engine:
             batch.clear()
             last_id = page[-1].id
             await db.update_job(self.job_id, processed=processed, last_msg_id=last_id)
+            await asyncio.sleep(0.1)  # gentle pacing — avoids triggering read flood limits
             if processed - last_logged >= 2000:
                 tot = job.get("total") or 0
                 await _log(self.job_id, f"Indexed {processed:,}{' / ' + f'{tot:,}' if tot else ''} messages")
