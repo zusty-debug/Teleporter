@@ -135,6 +135,21 @@ function updateConnBadge() {
     b.className = "badge badge-off";
     b.textContent = "Not connected";
   }
+  // home-screen connect banner
+  const banner = $("#connect-banner");
+  if (!banner) return;
+  const txt = $("#connect-banner-text");
+  const cta = $("#connect-cta");
+  if (S.boot && S.boot.authenticated && S.boot.profile) {
+    banner.classList.add("ok");
+    txt.textContent = "✅ Connected as " + S.boot.profile.name +
+      (S.boot.profile.username ? " (@" + S.boot.profile.username + ")" : "") + " — now pick an operation below";
+    cta.textContent = "Account settings";
+  } else {
+    banner.classList.remove("ok");
+    txt.textContent = "🔌 You're not connected to a Telegram account yet";
+    cta.textContent = "Connect account →";
+  }
 }
 
 // ------------------------------------------------------------------ bootstrap & password
@@ -167,6 +182,11 @@ $("#pwd-submit").addEventListener("click", async () => {
 $("#pwd-input").addEventListener("keydown", (e) => { if (e.key === "Enter") $("#pwd-submit").click(); });
 
 // ------------------------------------------------------------------ ops view
+document.addEventListener("click", (e) => {
+  if (e.target.closest("#connect-cta") || e.target.closest("#conn-badge")) {
+    showAuthView();
+  }
+});
 const OP_META = {
   c2c:   { icon: "📢➜📢", desc: "Copy everything from one channel straight into another. No indexing." },
   c2g:   { icon: "📢➜👥", desc: "Copy channel content into a group chat." },
@@ -241,9 +261,10 @@ function renderAuth() {
   const d = (S.boot && S.boot.defaults) || {};
   body.innerHTML = `
   <div class="panel">
+    <p class="muted small" style="margin:0 0 12px">👇 Pick one of the two options. <b>First time here? Use "Generate"</b> — it creates the session string for you from your phone number, no string needed.</p>
     <div class="auth-tabs">
-      <button class="btn small" id="tab-session">I have a Session String</button>
-      <button class="btn small ghost" id="tab-generate">Generate a new Session String</button>
+      <button class="btn" id="tab-session">🔑 I have a Session String</button>
+      <button class="btn ghost" id="tab-generate">✨ Generate a new Session String (recommended)</button>
     </div>
 
     <div id="form-session">
@@ -305,8 +326,8 @@ function renderAuth() {
   const switchTab = (gen) => {
     $("#form-session").classList.toggle("hidden", gen);
     $("#form-generate").classList.toggle("hidden", !gen);
-    tabS.className = "btn small" + (gen ? " ghost" : "");
-    tabG.className = "btn small" + (gen ? "" : " ghost");
+    tabS.className = "btn" + (gen ? " ghost" : "");
+    tabG.className = "btn" + (gen ? "" : " ghost");
   };
   tabS.addEventListener("click", () => switchTab(false));
   tabG.addEventListener("click", () => switchTab(true));

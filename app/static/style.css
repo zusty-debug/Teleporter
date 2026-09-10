@@ -311,3 +311,13 @@ table.hist tr:hover td { background: rgba(42,171,238,.04); }
 /* gentle breathing for status pills that are actively running */
 .st-indexing, .st-migrating { animation: breathe 1.6s ease-in-out infinite; }
 @keyframes breathe { 0%,100% { opacity: 1; } 50% { opacity: .62; } }
+
+/* ------------------------------------------------------ connect banner */
+.connect-banner {
+  display: flex; align-items: center; justify-content: space-between; gap: 14px;
+  border: 1px dashed var(--accent); border-radius: 12px; padding: 13px 18px;
+  background: rgba(42, 171, 238, .07); margin-bottom: 22px; font-size: 14px;
+  flex-wrap: wrap;
+}
+.connect-banner.ok { border-color: var(--ok); background: rgba(62,207,142,.07); }
+#conn-badge { cursor: pointer; }
