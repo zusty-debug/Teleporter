@@ -254,3 +254,60 @@ table.hist tr:hover td { background: rgba(42,171,238,.04); }
 }
 .modal-card h3 { margin: 0 0 6px; }
 .modal-actions { display: flex; justify-content: flex-end; align-items: center; gap: 12px; margin-top: 16px; }
+
+/* ------------------------------------------------------ live activity (heartbeat) */
+#netbar {
+  position: fixed; top: 0; left: 0; height: 3px; width: 0%;
+  background: linear-gradient(90deg, var(--accent), #7a5cff);
+  z-index: 400; opacity: 0; pointer-events: none;
+  transition: opacity .25s ease;
+  box-shadow: 0 0 10px rgba(42, 171, 238, .8);
+}
+#netbar.on { opacity: 1; }
+
+/* beating stripes on an active progress bar */
+.progress-inner.beating {
+  background-image: linear-gradient(135deg, var(--accent), var(--accent2)),
+    repeating-linear-gradient(45deg, rgba(255,255,255,.22) 0 10px, transparent 10px 20px);
+  background-blend-mode: overlay;
+  animation: stripes .8s linear infinite;
+}
+@keyframes stripes { to { background-position: 0 0, 28px 0; } }
+
+/* indeterminate bar (counting / unknown total) */
+.progress-outer.indet .progress-inner {
+  width: 38% !important;
+  background: linear-gradient(90deg, var(--accent2), var(--accent), var(--accent2));
+  animation: indetslide 1.15s ease-in-out infinite;
+}
+@keyframes indetslide {
+  0% { margin-left: -40%; }
+  100% { margin-left: 102%; }
+}
+
+/* pulsing LIVE dot */
+.livedot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: var(--ok); position: relative; vertical-align: -1px; }
+.livedot::after {
+  content: ""; position: absolute; inset: -5px; border-radius: 50%;
+  border: 2px solid var(--ok); opacity: .7; animation: ping 1.15s ease-out infinite;
+}
+.livedot.warn { background: var(--warn); }
+.livedot.warn::after { border-color: var(--warn); }
+@keyframes ping { 0% { transform: scale(.55); opacity: .9; } 100% { transform: scale(1.5); opacity: 0; } }
+.live-label { font-size: 12px; color: var(--ok); font-weight: 700; letter-spacing: .8px; margin-left: 8px; }
+.live-label.warn { color: var(--warn); }
+
+/* spinner for busy buttons & pickers */
+.spinner {
+  display: inline-block; width: 14px; height: 14px; border-radius: 50%;
+  border: 2px solid rgba(255,255,255,.35); border-top-color: #fff;
+  animation: spin .7s linear infinite; vertical-align: -2px; margin-right: 8px;
+}
+.spinner.dark { border-color: rgba(142,160,192,.3); border-top-color: var(--accent); }
+@keyframes spin { to { transform: rotate(360deg); } }
+.btn.busy { opacity: .75; pointer-events: none; }
+.pk-loading { display: flex; align-items: center; gap: 4px; color: var(--muted); font-size: 13px; padding: 10px 12px; }
+
+/* gentle breathing for status pills that are actively running */
+.st-indexing, .st-migrating { animation: breathe 1.6s ease-in-out infinite; }
+@keyframes breathe { 0%,100% { opacity: 1; } 50% { opacity: .62; } }

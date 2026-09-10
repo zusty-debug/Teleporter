@@ -44,19 +44,64 @@ function toast(msg, kind = "") {
   $("#toasts").appendChild(el);
   setTimeout(() => el.remove(), 5200);
 }
-async function api(path, method = "GET", body) {
-  const opts = { method, headers: {} };
-  if (S.token) opts.headers["X-App-Token"] = S.token;
-  if (body !== undefined) {
-    opts.headers["Content-Type"] = "application/json";
-    opts.body = JSON.stringify(body);
+// ---------- global activity bar ("heartbeat") ----------
+let netCount = 0, netTimer = null;
+function netStart() {
+  netCount++;
+  const el = $("#netbar");
+  el.classList.add("on");
+  if (netTimer) return;
+  let w = 10;
+  el.style.width = w + "%";
+  netTimer = setInterval(() => {
+    if (netCount > 0 && w < 90) { w += (90 - w) * 0.09; el.style.width = w + "%"; }
+  }, 130);
+}
+function netDone() {
+  netCount = Math.max(0, netCount - 1);
+  if (netCount > 0) return;
+  if (netTimer) { clearInterval(netTimer); netTimer = null; }
+  const el = $("#netbar");
+  el.style.width = "100%";
+  setTimeout(() => {
+    el.classList.remove("on");
+    setTimeout(() => { el.style.width = "0%"; }, 300);
+  }, 220);
+}
+
+// ---------- busy state for buttons ----------
+function setBusy(btn, on, label) {
+  if (!btn) return;
+  if (on) {
+    if (btn.dataset.orig === undefined) btn.dataset.orig = btn.innerHTML;
+    btn.classList.add("busy");
+    btn.disabled = true;
+    btn.innerHTML = `<span class="spinner"></span>${esc(label || "Working…")}`;
+  } else {
+    btn.classList.remove("busy");
+    btn.disabled = false;
+    if (btn.dataset.orig !== undefined) btn.innerHTML = btn.dataset.orig;
   }
-  const r = await fetch("/api" + path, opts);
-  if (r.status === 401) { showPasswordModal(); throw new Error("unauthorized"); }
-  let data = {};
-  try { data = await r.json(); } catch (_) { /* empty */ }
-  if (!r.ok) throw new Error(data.detail || r.statusText || "Request failed");
-  return data;
+}
+
+async function api(path, method = "GET", body, opts = {}) {
+  if (!opts.quiet) netStart();
+  const req = { method, headers: {} };
+  if (S.token) req.headers["X-App-Token"] = S.token;
+  if (body !== undefined) {
+    req.headers["Content-Type"] = "application/json";
+    req.body = JSON.stringify(body);
+  }
+  try {
+    const r = await fetch("/api" + path, req);
+    if (r.status === 401) { showPasswordModal(); throw new Error("unauthorized"); }
+    let data = {};
+    try { data = await r.json(); } catch (_) { /* empty */ }
+    if (!r.ok) throw new Error(data.detail || r.statusText || "Request failed");
+    return data;
+  } finally {
+    if (!opts.quiet) netDone();
+  }
 }
 function debounce(fn, ms) {
   let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); };
@@ -182,7 +227,8 @@ function renderAuth() {
       </div>`;
     $("#disconnect-btn").addEventListener("click", async () => {
       if (!confirm("Disconnect and forget the saved session on this server?")) return;
-      await api("/auth/disconnect", "POST");
+      const btn = $("#disconnect-btn"); setBusy(btn, true, "Disconnecting…");
+      try { await api("/auth/disconnect", "POST"); } catch (e) { toast(e.message, "err"); }
       S.boot.authenticated = false; S.boot.profile = null;
       updateConnBadge(); renderAuth(); toast("Disconnected", "ok");
     });
@@ -266,7 +312,7 @@ function renderAuth() {
   tabG.addEventListener("click", () => switchTab(true));
 
   $("#s-connect").addEventListener("click", async () => {
-    const btn = $("#s-connect"); btn.disabled = true; $("#s-error").textContent = "";
+    const btn = $("#s-connect"); setBusy(btn, true, "Connecting to Telegram…"); $("#s-error").textContent = "";
     try {
       const r = await api("/auth/session", "POST", {
         api_id: Number($("#s-api-id").value.trim()),
@@ -275,12 +321,11 @@ function renderAuth() {
       });
       S.boot.authenticated = true; S.boot.profile = r.profile;
       updateConnBadge(); renderAuth(); toast(`Welcome, ${r.profile.name}!`, "ok");
-    } catch (e) { $("#s-error").textContent = e.message; }
-    btn.disabled = false;
+    } catch (e) { $("#s-error").textContent = e.message; setBusy(btn, false); }
   });
 
   $("#g-send-code").addEventListener("click", async () => {
-    const btn = $("#g-send-code"); btn.disabled = true; $("#g-error").textContent = "";
+    const btn = $("#g-send-code"); setBusy(btn, true, "Sending code…"); $("#g-error").textContent = "";
     try {
       await api("/auth/send-code", "POST", {
         api_id: Number($("#g-api-id").value.trim()),
@@ -291,8 +336,7 @@ function renderAuth() {
       $("#gen-step-2").classList.remove("hidden");
       $("#g-code").focus();
       toast("Code sent — check your Telegram messages", "ok");
-    } catch (e) { $("#g-error").textContent = e.message; }
-    btn.disabled = false;
+    } catch (e) { $("#g-error").textContent = e.message; setBusy(btn, false); }
   });
 
   $("#g-restart").addEventListener("click", async () => {
@@ -303,7 +347,7 @@ function renderAuth() {
   });
 
   $("#g-verify").addEventListener("click", async () => {
-    const btn = $("#g-verify"); btn.disabled = true; $("#g-error-2").textContent = "";
+    const btn = $("#g-verify"); setBusy(btn, true, "Verifying…"); $("#g-error-2").textContent = "";
     try {
       const r = await api("/auth/verify-code", "POST", {
         code: $("#g-code").value.trim(),
@@ -312,6 +356,7 @@ function renderAuth() {
       if (r.need_password) {
         $("#g-2fa-wrap").classList.remove("hidden");
         $("#g-error-2").textContent = r.message;
+        setBusy(btn, false);
         return;
       }
       S.boot.authenticated = true; S.boot.profile = r.profile;
@@ -322,8 +367,7 @@ function renderAuth() {
       $("#auth-continue").disabled = false;
       $("#auth-hint").textContent = "Connected ✓";
       toast(`Welcome, ${r.profile.name}!`, "ok");
-    } catch (e) { $("#g-error-2").textContent = e.message; }
-    btn.disabled = false;
+    } catch (e) { $("#g-error-2").textContent = e.message; setBusy(btn, false); }
   });
 
   $("#g-copy").addEventListener("click", async () => {
@@ -353,6 +397,8 @@ function chatPicker(container, opts) {
   const search = debounce(async () => {
     const q = input.value.trim();
     if (!q || q.length < 1) { results.classList.add("hidden"); return; }
+    results.classList.remove("hidden");
+    results.innerHTML = `<div class="pk-loading"><span class="spinner dark"></span> Searching your chats…</div>`;
     try {
       const r = await api("/chats?q=" + encodeURIComponent(q));
       if (!r.chats.length) {
@@ -374,7 +420,10 @@ function chatPicker(container, opts) {
         });
       }
       results.classList.remove("hidden");
-    } catch (e) { toast(e.message, "err"); }
+    } catch (e) {
+      results.innerHTML = `<div class="pk-loading">⚠ ${esc(e.message)}</div>`;
+      results.classList.remove("hidden");
+    }
   }, 350);
 
   input.addEventListener("input", search);
@@ -461,13 +510,21 @@ function renderFilters() {
 
 function validateStart() {
   const spec = (S.boot.kinds || {})[S.kind] || {};
+  const btn = $("#start-btn");
+  if (btn.classList.contains("busy")) return;   // don't fight an in-flight start
   const ok = S.source && (!spec.has_dest || S.dest) && S.filters.size > 0;
-  $("#start-btn").disabled = !ok;
+  btn.disabled = !ok;
 }
 
 $("#start-btn").addEventListener("click", async () => {
   const btn = $("#start-btn");
-  btn.disabled = true; $("#setup-error").textContent = "";
+  const spec = (S.boot.kinds || {})[S.kind] || {};
+  const isIndex = S.kind === "index";
+  const busyLabel = isIndex ? "Scanning source…"
+    : spec.topics ? "Resolving chats & starting indexer…"
+    : "Resolving chats & starting…";
+  setBusy(btn, true, busyLabel);
+  $("#setup-error").textContent = "";
   const payload = {
     kind: S.kind,
     source: String(S.source.id),
@@ -479,15 +536,18 @@ $("#start-btn").addEventListener("click", async () => {
     const r = await api("/jobs", "POST", payload);
     S.jobId = r.job_id;
     toast("Job started", "ok");
+    setBusy(btn, false);
     openJobView();
   } catch (e) {
     $("#setup-error").textContent = e.message;
-    btn.disabled = false;
+    setBusy(btn, false);
+    validateStart();
   }
 });
 
 // ------------------------------------------------------------------ job view
 function openJobView() {
+  S.lastBeat = null;
   showView("job");
   pollJob(true);
 }
@@ -498,8 +558,9 @@ async function pollJob(immediate) {
   stopPoll();
   if (!S.jobId || S.view !== "job") return;
   try {
-    const r = await api("/jobs/" + S.jobId);
+    const r = await api("/jobs/" + S.jobId, "GET", undefined, { quiet: true });
     S.job = r.job;
+    S.lastBeat = Date.now();
     renderJob();
     const st = S.job.status;
     if (["indexing", "migrating", "pending"].includes(st)) {
@@ -522,9 +583,25 @@ function renderJob() {
   const total = j.total || 0;
   const pct = total ? Math.min(100, Math.round((j.processed / total) * 100)) : 0;
   const active = ["indexing", "migrating", "pending"].includes(j.status);
+  const indet = active && (!total || j.status === "pending");  // counting / warming up → sliding bar
 
   let route = `<b>${esc(j.source ? j.source.title : "?")}</b>`;
   if (j.dest) route += ` &nbsp;➜&nbsp; <b>${esc(j.dest.title)}</b>`;
+
+  // LIVE indicator: pulses while the engine is running; shows heartbeat age when idle-paused
+  let live = "";
+  if (active) {
+    live = `<span class="livedot"></span><span class="live-label">LIVE</span>`;
+  } else if (S.lastBeat) {
+    const age = Math.max(0, Math.round((Date.now() - S.lastBeat) / 1000));
+    live = `<span class="livedot warn"></span><span class="live-label warn">last update ${age}s ago</span>`;
+  }
+
+  const beatHint = active
+    ? (j.status === "pending" ? "Starting engine…"
+        : !total ? "Counting source messages — the bar will fill once the total is known…"
+        : j.status === "indexing" ? "Indexing in progress…" : "Copying in progress…")
+    : "";
 
   let controls = "";
   if (active) {
@@ -544,18 +621,24 @@ function renderJob() {
       <a class="btn small" href="/api/jobs/${j.id}/report.csv${S.token ? "?token=" + encodeURIComponent(S.token) : ""}">CSV</a>`;
   }
 
+  const barCls = indet ? "progress-outer indet" : "progress-outer";
+  const innerCls = active && !indet ? "progress-inner beating" : "progress-inner";
+  const progressNote = total
+    ? `${j.processed.toLocaleString()} / ${total.toLocaleString()} messages processed (${pct}%)`
+    : `${j.processed.toLocaleString()} messages processed`;
+
   $("#job-content").innerHTML = `
     <div class="panel">
       <div class="job-head">
         <div>
-          <h2 style="margin:0">${esc(j.kind_label)}</h2>
+          <h2 style="margin:0">${esc(j.kind_label)} ${live}</h2>
           <div class="job-route">${route}</div>
         </div>
         <span class="status-pill st-${j.status}">${esc(STATUS_LABEL[j.status] || j.status)}</span>
       </div>
       ${j.error ? `<p class="error">⚠ ${esc(j.error)}</p>` : ""}
-      <div class="progress-outer"><div class="progress-inner" style="width:${pct}%"></div></div>
-      <div class="muted small">${total ? `${j.processed.toLocaleString()} / ${total.toLocaleString()} messages processed (${pct}%)` : `${j.processed.toLocaleString()} messages processed`}</div>
+      <div class="${barCls}"><div class="${innerCls}" style="width:${indet ? 0 : pct}%"></div></div>
+      <div class="muted small">${progressNote}${beatHint ? ` · <span style="color:var(--accent)">${esc(beatHint)}</span>` : ""}</div>
       <div class="stats-grid">
         <div class="stat"><div class="n">${j.copied.toLocaleString()}</div><div class="l">Copied</div></div>
         <div class="stat"><div class="n">${j.skipped.toLocaleString()}</div><div class="l">Skipped / filtered</div></div>
@@ -574,12 +657,22 @@ function renderJob() {
 
   const box = $("#job-logs"); if (box) box.scrollTop = box.scrollHeight;
   const bind = (id, fn) => { const el = document.getElementById(id); if (el) el.addEventListener("click", fn); };
-  bind("jb-pause", async () => { try { await api(`/jobs/${j.id}/pause`, "POST"); pollJob(true); } catch (e) { toast(e.message, "err"); } });
-  bind("jb-cancel", async () => { try { await api(`/jobs/${j.id}/cancel`, "POST"); pollJob(true); } catch (e) { toast(e.message, "err"); } });
-  bind("jb-resume", async () => { try { await api(`/jobs/${j.id}/resume`, "POST"); pollJob(true); } catch (e) { toast(e.message, "err"); } });
+  bind("jb-pause", async () => {
+    const b = document.getElementById("jb-pause"); setBusy(b, true, "Pausing…");
+    try { await api(`/jobs/${j.id}/pause`, "POST"); pollJob(true); } catch (e) { toast(e.message, "err"); setBusy(b, false); }
+  });
+  bind("jb-cancel", async () => {
+    const b = document.getElementById("jb-cancel"); setBusy(b, true, "Canceling…");
+    try { await api(`/jobs/${j.id}/cancel`, "POST"); pollJob(true); } catch (e) { toast(e.message, "err"); setBusy(b, false); }
+  });
+  bind("jb-resume", async () => {
+    const b = document.getElementById("jb-resume"); setBusy(b, true, "Resuming…");
+    try { await api(`/jobs/${j.id}/resume`, "POST"); pollJob(true); } catch (e) { toast(e.message, "err"); setBusy(b, false); }
+  });
   bind("jb-delete", async () => {
     if (!confirm("Delete this job and all its index data?")) return;
-    try { await api("/jobs/" + j.id, "DELETE"); S.jobId = null; showView("ops"); } catch (e) { toast(e.message, "err"); }
+    const b = document.getElementById("jb-delete"); setBusy(b, true, "Deleting…");
+    try { await api("/jobs/" + j.id, "DELETE"); S.jobId = null; showView("ops"); } catch (e) { toast(e.message, "err"); setBusy(b, false); }
   });
   bind("jb-back", () => { S.jobId = null; showView("ops"); });
   if (j.status === "awaiting_mapping") bindMapping(j);
@@ -707,20 +800,24 @@ function bindMapping(j) {
   $("#mapping-start").addEventListener("click", async () => {
     refreshKw();
     S.mapDraft.keywords = (S.mapDraft.keywords || []).filter((r) => r.words && r.words.length && r.topic);
-    const btn = $("#mapping-start"); btn.disabled = true;
+    const btn = $("#mapping-start"); setBusy(btn, true, "Preparing topics & starting migration…");
     try {
       await api(`/jobs/${j.id}/mapping`, "POST", { mapping: S.mapDraft });
       toast("Migration started!", "ok");
       pollJob(true);
-    } catch (e) { toast(e.message, "err"); btn.disabled = false; }
+    } catch (e) { toast(e.message, "err"); setBusy(btn, false); }
   });
 }
 
 // ------------------------------------------------------------------ history
 async function refreshHistory() {
   try {
-    const r = await api("/jobs");
     const body = $("#history-body");
+    if (body && !body.dataset.loaded) {
+      body.innerHTML = `<div class="pk-loading"><span class="spinner dark"></span> Loading job history…</div>`;
+    }
+    const r = await api("/jobs", "GET", undefined, { quiet: true });
+    if (body) body.dataset.loaded = "1";
     if (!r.jobs.length) {
       body.innerHTML = `<p class="muted" style="margin:6px">No jobs yet — start one from the “New job” tab.</p>`;
       return;
