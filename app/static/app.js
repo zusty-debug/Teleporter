@@ -37,6 +37,12 @@ function fmtDate(ts) {
   if (!ts) return "—";
   return new Date(ts * 1000).toLocaleString();
 }
+function fmtDur(sec) {
+  sec = Math.max(1, Math.round(sec));
+  if (sec < 60) return sec + "s";
+  if (sec < 3600) return Math.round(sec / 60) + "m";
+  return (sec / 3600).toFixed(1) + "h";
+}
 function toast(msg, kind = "") {
   const el = document.createElement("div");
   el.className = "toast " + kind;
@@ -622,6 +628,19 @@ async function pollJob(immediate) {
     const r = await api("/jobs/" + S.jobId, "GET", undefined, { quiet: true });
     S.job = r.job;
     S.lastBeat = Date.now();
+    // ---- live speed tracking (msgs/sec) for real progress readout ----
+    const now = Date.now();
+    const p = r.job.processed || 0;
+    if (S.rate && S.rate.jobId === r.job.id) {
+      const dt = (now - S.rate.ts) / 1000;
+      if (dt >= 0.5) {
+        const inst = Math.max(0, (p - S.rate.processed) / dt);
+        S.rate.speed = S.rate.speed > 0 ? S.rate.speed * 0.6 + inst * 0.4 : inst;
+        S.rate.ts = now; S.rate.processed = p;
+      }
+    } else {
+      S.rate = { jobId: r.job.id, ts: now, processed: p, speed: 0 };
+    }
     renderJob();
     const st = S.job.status;
     if (["indexing", "migrating", "pending"].includes(st)) {
@@ -658,9 +677,17 @@ function renderJob() {
     live = `<span class="livedot warn"></span><span class="live-label warn">last update ${age}s ago</span>`;
   }
 
+  // live speed + ETA from the poll-rate tracker
+  let rateTxt = "";
+  if (active && S.rate && S.rate.jobId === j.id && S.rate.speed > 0.05) {
+    rateTxt = ` · <span style="color:var(--accent)">≈ ${S.rate.speed.toFixed(1)} msg/s</span>`;
+    if (total && total > j.processed) {
+      rateTxt += ` · <span style="color:var(--accent)">ETA ${fmtDur((total - j.processed) / S.rate.speed)}</span>`;
+    }
+  }
   const beatHint = active
     ? (j.status === "pending" ? "Starting engine…"
-        : !total ? "Counting source messages — the bar will fill once the total is known…"
+        : !total ? "Scanning — Telegram reports no total for this chat type; running count shown"
         : j.status === "indexing" ? "Indexing in progress…" : "Copying in progress…")
     : "";
 
@@ -699,7 +726,7 @@ function renderJob() {
       </div>
       ${j.error ? `<p class="error">⚠ ${esc(j.error)}</p>` : ""}
       <div class="${barCls}"><div class="${innerCls}" style="width:${indet ? 0 : pct}%"></div></div>
-      <div class="muted small">${progressNote}${beatHint ? ` · <span style="color:var(--accent)">${esc(beatHint)}</span>` : ""}</div>
+      <div class="muted small">${progressNote}${rateTxt}${beatHint ? ` · <span style="color:var(--accent)">${esc(beatHint)}</span>` : ""}</div>
       <div class="stats-grid">
         <div class="stat"><div class="n">${j.copied.toLocaleString()}</div><div class="l">Copied</div></div>
         <div class="stat"><div class="n">${j.skipped.toLocaleString()}</div><div class="l">Skipped / filtered</div></div>

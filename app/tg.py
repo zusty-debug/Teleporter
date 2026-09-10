@@ -252,6 +252,29 @@ class TelegramManager:
                 last_err = AuthError(_friendly(e, f"Could not open chat {raw}"))
         raise last_err or AuthError(f"Could not resolve: {raw}")
 
+    # ------------------------------------------------------------- chat info
+
+    async def get_message_count(self, chat_id) -> int:
+        """Exact message count of a channel/supergroup via one raw call.
+
+        Returns 0 when Telegram doesn't expose a count (e.g. legacy groups).
+        """
+        from pyrogram.raw.functions.channels import GetFullChannel
+        from pyrogram.raw.functions.messages import GetFullChat
+        client = await self.ensure()
+        peer = await client.resolve_peer(chat_id)
+        try:
+            if type(peer).__name__ == "PeerChannel":
+                r = await client.invoke(GetFullChannel(channel=peer))
+                return int(getattr(r.full_chat, "messages_count", 0) or 0)
+            if type(peer).__name__ == "PeerChat":
+                r = await client.invoke(GetFullChat(chat_id=peer.chat_id))
+                fc = r.full_chats[0]
+                return int(getattr(fc, "messages_count", 0) or 0)
+        except Exception:  # noqa: BLE001
+            pass
+        return 0
+
     # ------------------------------------------------------------- forum topics
 
     async def get_topics(self, chat_id) -> list:

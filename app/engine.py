@@ -136,20 +136,6 @@ class Engine:
                     raise
         return []
 
-    async def _count_messages(self, client, chat_id) -> int:
-        n = 0
-        offset = 0
-        try:
-            while True:
-                page = await self._history_page(client, chat_id, offset, size=500)
-                if not page:
-                    return n
-                n += len(page)
-                offset = page[-1].id
-        except Exception as e:  # noqa: BLE001
-            await _log(self.job_id, f"Could not finish pre-count ({e}); progress will show running totals.", "warn")
-            return n or 0
-
     async def _pages(self, client, chat_id, offset_id: int, page_size: int = 100):
         """Yield pages of messages older than offset_id, newest-first per page."""
         while True:
@@ -167,18 +153,20 @@ class Engine:
         source = job["source"]["id"]
 
         if not job.get("total"):
-            await _log(self.job_id, "Counting source messages…")
-            total = await self._count_messages(client, source)
-            await db.update_job(self.job_id, total=total)
+            total = await manager.get_message_count(source)
             job["total"] = total
+            await db.update_job(self.job_id, total=total)
             if total:
-                await _log(self.job_id, f"Source has {total} messages")
+                await _log(self.job_id, f"Source has {total} messages — scanning now (live progress)")
+            else:
+                await _log(self.job_id, "Telegram didn't report a total for this chat — running count only")
 
         batch = []
         processed = job.get("processed") or 0
         last_id = job.get("last_msg_id") or 0
+        last_logged = processed
 
-        async for page in self._pages(client, source, last_id):
+        async for page in self._pages(client, source, last_id, page_size=500):
             for msg in page:
                 mtype = classify.message_type(msg)
                 text = classify.message_text(msg)
@@ -196,6 +184,10 @@ class Engine:
             batch.clear()
             last_id = page[-1].id
             await db.update_job(self.job_id, processed=processed, last_msg_id=last_id)
+            if processed - last_logged >= 2000:
+                tot = job.get("total") or 0
+                await _log(self.job_id, f"Indexed {processed:,}{' / ' + f'{tot:,}' if tot else ''} messages")
+                last_logged = processed
             if await self._check_stop():
                 return
 
@@ -227,8 +219,7 @@ class Engine:
         links_only = classify.links_only_mode(self.filters)
 
         if not job.get("total"):
-            await _log(self.job_id, "Counting source messages…")
-            total = await self._count_messages(client, source)
+            total = await manager.get_message_count(source)
             await db.update_job(self.job_id, total=total)
 
         counters = {"copied": job.get("copied") or 0, "skipped": job.get("skipped") or 0,
