@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: teleporter
+    runtime: docker
+    plan: starter
+    healthCheckPath: /api/health
+    envVars:
+      - key: APP_PASSWORD
+        generateValue: true   # replace with your own strong password if preferred
+      - key: DATA_DIR
+        value: /data
+    disk:
+      name: teleporter-data
+      mountPath: /data
+      sizeGB: 1

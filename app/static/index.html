@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Teleporter — Telegram Migration Studio</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📡</text></svg>">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="logo">📡</span>
+    <div>
+      <div class="brand-name">Teleporter</div>
+      <div class="brand-sub">Telegram migration &amp; indexing studio</div>
+    </div>
+  </div>
+  <div class="topbar-right">
+    <div id="conn-badge" class="badge badge-off">Not connected</div>
+    <nav class="tabs">
+      <button class="tab active" data-nav="new">New job</button>
+      <button class="tab" data-nav="history">History</button>
+    </nav>
+  </div>
+</header>
+
+<main id="app">
+
+  <!-- stepper -->
+  <div id="stepper" class="stepper">
+    <div class="step active" data-step="1"><span class="dot">1</span>Operation</div>
+    <div class="step" data-step="2"><span class="dot">2</span>Account</div>
+    <div class="step" data-step="3"><span class="dot">3</span>Setup</div>
+    <div class="step" data-step="4"><span class="dot">4</span>Run</div>
+  </div>
+
+  <!-- VIEW: operation picker -->
+  <section id="view-ops" class="view">
+    <h2>What do you want to do?</h2>
+    <p class="muted">Pick an operation. Topic migrations index the source first so content can be classified automatically.</p>
+    <div id="ops-grid" class="ops-grid"></div>
+  </section>
+
+  <!-- VIEW: auth -->
+  <section id="view-auth" class="view hidden">
+    <h2>Telegram account</h2>
+    <div id="auth-body"></div>
+    <div class="wizard-nav">
+      <button class="btn ghost" data-goto-ops>← Back</button>
+      <span class="muted" id="auth-hint">Connect to continue</span>
+      <button class="btn primary" id="auth-continue" disabled>Continue →</button>
+    </div>
+  </section>
+
+  <!-- VIEW: setup -->
+  <section id="view-setup" class="view hidden">
+    <h2 id="setup-title">Setup</h2>
+    <p class="muted" id="setup-sub"></p>
+
+    <div class="setup-grid">
+      <div class="panel">
+        <h3>📤 Source</h3>
+        <div id="source-picker"></div>
+      </div>
+      <div class="panel" id="dest-panel">
+        <h3>📥 Destination</h3>
+        <div id="dest-picker"></div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h3>🎛 What to copy</h3>
+      <p class="muted small">Content is <b>copied</b> (re-sent), never forwarded — no “Forwarded from…” tags.</p>
+      <div id="filters-grid" class="filters-grid"></div>
+      <div class="delay-row">
+        <label for="delay-input">Delay between messages (seconds)</label>
+        <input id="delay-input" type="number" min="0" max="60" step="0.5" value="1">
+        <span class="muted small">keeps Telegram flood limits happy · 1s recommended</span>
+      </div>
+    </div>
+
+    <div class="wizard-nav">
+      <button class="btn ghost" id="setup-back">← Back</button>
+      <span id="setup-error" class="error"></span>
+      <button class="btn primary big" id="start-btn">🚀 Start</button>
+    </div>
+  </section>
+
+  <!-- VIEW: live job -->
+  <section id="view-job" class="view hidden">
+    <div id="job-content"></div>
+  </section>
+
+  <!-- VIEW: history -->
+  <section id="view-history" class="view hidden">
+    <h2>Job history</h2>
+    <div id="history-body" class="panel"></div>
+  </section>
+
+</main>
+
+<div id="toasts"></div>
+
+<!-- password modal -->
+<div id="pwd-modal" class="modal hidden">
+  <div class="modal-card">
+    <h3>🔒 Teleporter is password-protected</h3>
+    <p class="muted small">Enter the app password (APP_PASSWORD environment variable on the server).</p>
+    <input id="pwd-input" type="password" placeholder="App password">
+    <div class="modal-actions">
+      <span id="pwd-error" class="error"></span>
+      <button class="btn primary" id="pwd-submit">Unlock</button>
+    </div>
+  </div>
+</div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

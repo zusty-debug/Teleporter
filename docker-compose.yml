@@ -1,0 +1,14 @@
+services:
+  teleporter:
+    build: .
+    container_name: teleporter
+    ports:
+      - "8000:8000"
+    environment:
+      - APP_PASSWORD=${APP_PASSWORD:-}
+      - DATA_DIR=/data
+      - DEFAULT_API_ID=${DEFAULT_API_ID:-}
+      - DEFAULT_API_HASH=${DEFAULT_API_HASH:-}
+    volumes:
+      - ./data:/data
+    restart: unless-stopped
