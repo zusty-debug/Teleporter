@@ -189,76 +189,6 @@ class Engine:
                 await asyncio.sleep(secs + 1)
 
 
-def _raw_to_shim(m, users: dict):
-    """Convert a raw MTProto message into a SimpleNamespace exposing exactly the
-    attributes the classifier/report code reads."""
-    o = SimpleNamespace(
-        id=m.id, text=None, caption=None, photo=None, video=None, video_note=None,
-        animation=None, audio=None, voice=None, document=None, sticker=None,
-        poll=None, location=None, venue=None, contact=None, service=None,
-        from_user=None, date=None,
-    )
-    o.date = datetime.fromtimestamp(m.date, tz=timezone.utc) if getattr(m, "date", None) else None
-    if getattr(m, "action", None) is not None:
-        o.service = True
-    txt = getattr(m, "message", None) or None
-    media = getattr(m, "media", None)
-    if isinstance(media, raw_types.MessageMediaPhoto) and media.photo:
-        size = 0
-        try:
-            size = max((s.size for s in media.photo.sizes if hasattr(s, "size")), default=0)
-        except Exception:  # noqa: BLE001
-            pass
-        o.photo = SimpleNamespace(file_size=size)
-        o.caption = txt
-    elif isinstance(media, raw_types.MessageMediaDocument) and media.document:
-        doc = media.document
-        fsize = getattr(doc, "size", 0) or 0
-        fname = None
-        for a in (doc.attributes or []):
-            if isinstance(a, raw_types.DocumentAttributeFilename):
-                fname = a.file_name
-            elif isinstance(a, raw_types.DocumentAttributeAnimated):
-                o.animation = SimpleNamespace(file_size=fsize, duration=0, width=0, height=0, file_name=fname)
-            elif isinstance(a, raw_types.DocumentAttributeVideo):
-                if getattr(a, "round_message", False):
-                    o.video_note = SimpleNamespace(file_size=fsize, duration=getattr(a, "duration", 0),
-                                                   length=getattr(a, "w", 0))
-                else:
-                    o.video = SimpleNamespace(file_size=fsize, duration=getattr(a, "duration", 0),
-                                              width=getattr(a, "w", 0), height=getattr(a, "h", 0),
-                                              file_name=fname, supports_streaming=False)
-            elif isinstance(a, raw_types.DocumentAttributeAudio):
-                if getattr(a, "voice", False):
-                    o.voice = SimpleNamespace(file_size=fsize, duration=getattr(a, "duration", 0))
-                else:
-                    o.audio = SimpleNamespace(file_size=fsize, duration=getattr(a, "duration", 0),
-                                              title=getattr(a, "title", None),
-                                              performer=getattr(a, "performer", None), file_name=fname)
-            elif isinstance(a, raw_types.DocumentAttributeSticker):
-                o.sticker = SimpleNamespace(file_size=fsize)
-        if not any([o.video, o.video_note, o.animation, o.audio, o.voice, o.sticker]):
-            o.document = SimpleNamespace(file_size=fsize, file_name=fname)
-        o.caption = txt
-    elif isinstance(media, raw_types.MessageMediaPoll):
-        o.poll = SimpleNamespace(
-            question=media.poll.question,
-            options=[SimpleNamespace(text=x.text) for x in (media.poll.answers or [])])
-    elif isinstance(media, raw_types.MessageMediaContact):
-        o.contact = SimpleNamespace(phone_number=media.phone_number, first_name=media.first_name,
-                                    last_name=media.last_name or None)
-    elif isinstance(media, raw_types.MessageMediaGeo):
-        g = media.geo
-        o.location = SimpleNamespace(latitude=getattr(g, "lat", 0), longitude=getattr(g, "long", 0))
-    if o.text is None and txt and not o.caption:
-        o.text = txt
-    fid = getattr(m, "from_id", None)
-    if isinstance(fid, raw_types.PeerUser) and getattr(fid, "user_id", None) in users:
-        u = users[fid.user_id]
-        o.from_user = SimpleNamespace(id=u.id, first_name=getattr(u, "first_name", None),
-                                      last_name=getattr(u, "last_name", None),
-                                      username=getattr(u, "username", None))
-    return o
 
     async def _pages(self, client, chat_id, offset_id: int, page_size: int = 100):
         """Yield pages of messages older than offset_id, newest-first per page."""
@@ -521,6 +451,78 @@ def _raw_to_shim(m, users: dict):
 
         if self.delay > 0:
             await asyncio.sleep(self.delay)
+
+
+def _raw_to_shim(m, users: dict):
+    """Convert a raw MTProto message into a SimpleNamespace exposing exactly the
+    attributes the classifier/report code reads."""
+    o = SimpleNamespace(
+        id=m.id, text=None, caption=None, photo=None, video=None, video_note=None,
+        animation=None, audio=None, voice=None, document=None, sticker=None,
+        poll=None, location=None, venue=None, contact=None, service=None,
+        from_user=None, date=None,
+    )
+    o.date = datetime.fromtimestamp(m.date, tz=timezone.utc) if getattr(m, "date", None) else None
+    if getattr(m, "action", None) is not None:
+        o.service = True
+    txt = getattr(m, "message", None) or None
+    media = getattr(m, "media", None)
+    if isinstance(media, raw_types.MessageMediaPhoto) and media.photo:
+        size = 0
+        try:
+            size = max((s.size for s in media.photo.sizes if hasattr(s, "size")), default=0)
+        except Exception:  # noqa: BLE001
+            pass
+        o.photo = SimpleNamespace(file_size=size)
+        o.caption = txt
+    elif isinstance(media, raw_types.MessageMediaDocument) and media.document:
+        doc = media.document
+        fsize = getattr(doc, "size", 0) or 0
+        fname = None
+        for a in (doc.attributes or []):
+            if isinstance(a, raw_types.DocumentAttributeFilename):
+                fname = a.file_name
+            elif isinstance(a, raw_types.DocumentAttributeAnimated):
+                o.animation = SimpleNamespace(file_size=fsize, duration=0, width=0, height=0, file_name=fname)
+            elif isinstance(a, raw_types.DocumentAttributeVideo):
+                if getattr(a, "round_message", False):
+                    o.video_note = SimpleNamespace(file_size=fsize, duration=getattr(a, "duration", 0),
+                                                   length=getattr(a, "w", 0))
+                else:
+                    o.video = SimpleNamespace(file_size=fsize, duration=getattr(a, "duration", 0),
+                                              width=getattr(a, "w", 0), height=getattr(a, "h", 0),
+                                              file_name=fname, supports_streaming=False)
+            elif isinstance(a, raw_types.DocumentAttributeAudio):
+                if getattr(a, "voice", False):
+                    o.voice = SimpleNamespace(file_size=fsize, duration=getattr(a, "duration", 0))
+                else:
+                    o.audio = SimpleNamespace(file_size=fsize, duration=getattr(a, "duration", 0),
+                                              title=getattr(a, "title", None),
+                                              performer=getattr(a, "performer", None), file_name=fname)
+            elif isinstance(a, raw_types.DocumentAttributeSticker):
+                o.sticker = SimpleNamespace(file_size=fsize)
+        if not any([o.video, o.video_note, o.animation, o.audio, o.voice, o.sticker]):
+            o.document = SimpleNamespace(file_size=fsize, file_name=fname)
+        o.caption = txt
+    elif isinstance(media, raw_types.MessageMediaPoll):
+        o.poll = SimpleNamespace(
+            question=media.poll.question,
+            options=[SimpleNamespace(text=x.text) for x in (media.poll.answers or [])])
+    elif isinstance(media, raw_types.MessageMediaContact):
+        o.contact = SimpleNamespace(phone_number=media.phone_number, first_name=media.first_name,
+                                    last_name=media.last_name or None)
+    elif isinstance(media, raw_types.MessageMediaGeo):
+        g = media.geo
+        o.location = SimpleNamespace(latitude=getattr(g, "lat", 0), longitude=getattr(g, "long", 0))
+    if o.text is None and txt and not o.caption:
+        o.text = txt
+    fid = getattr(m, "from_id", None)
+    if isinstance(fid, raw_types.PeerUser) and getattr(fid, "user_id", None) in users:
+        u = users[fid.user_id]
+        o.from_user = SimpleNamespace(id=u.id, first_name=getattr(u, "first_name", None),
+                                      last_name=getattr(u, "last_name", None),
+                                      username=getattr(u, "username", None))
+    return o
 
 
 async def _call_with_thread(fn, *args, thread_id=None, **kwargs):
