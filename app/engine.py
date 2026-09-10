@@ -6,11 +6,16 @@ copied-message set) is persisted in SQLite so jobs survive restarts and can resu
 import asyncio
 import inspect
 import time
+import traceback
 import uuid
+from datetime import datetime, timezone
+from types import SimpleNamespace
 from typing import Optional
 
 from pyrogram.enums import ParseMode
 from pyrogram.errors import FloodWait
+from pyrogram.raw import types as raw_types
+from pyrogram.raw.functions.messages import GetHistory
 
 from . import classify, db
 from .tg import manager
@@ -104,8 +109,9 @@ class Engine:
         except asyncio.CancelledError:  # noqa: BLE001
             pass
         except Exception as e:  # noqa: BLE001
+            tb = traceback.format_exc()[-700:].replace("\n", " | ")
             await db.update_job(self.job_id, status="failed", error=str(e))
-            await _log(self.job_id, f"Indexing failed: {e}", "error")
+            await _log(self.job_id, f"Indexing failed: {e} — {tb}", "error")
         finally:
             await self._safety_net()
             engines.pop(self.job_id, None)
@@ -118,8 +124,9 @@ class Engine:
         except asyncio.CancelledError:  # noqa: BLE001
             pass
         except Exception as e:  # noqa: BLE001
+            tb = traceback.format_exc()[-700:].replace("\n", " | ")
             await db.update_job(self.job_id, status="failed", error=str(e))
-            await _log(self.job_id, f"Migration failed: {e}", "error")
+            await _log(self.job_id, f"Migration failed: {e} — {tb}", "error")
         finally:
             await self._safety_net()
             engines.pop(self.job_id, None)
@@ -139,8 +146,8 @@ class Engine:
     # ------------------------------------------------------------------ counting
 
     async def _history_page(self, client, chat_id, offset_id: int, size: int = 100) -> list:
-        """One page of history. FloodWaits are slept through and retried forever —
-        a big channel scan must survive Telegram's read throttling, not die on it."""
+        """One page of history. FloodWaits are slept through and retried; if Pyrofork's
+        high-level parser chokes on a poison message we fall back to our own raw parser."""
         attempt = 0
         while True:
             try:
@@ -155,11 +162,103 @@ class Engine:
                            f"Telegram flood limit on read — sleeping {secs}s, then continuing "
                            f"(wait #{attempt}). Progress is safe.", "warn")
                 await asyncio.sleep(secs + 1)
-            except Exception:  # noqa: BLE001
+            except Exception as e:  # noqa: BLE001
                 attempt += 1
-                if attempt > 3:
-                    raise
-                await asyncio.sleep(3)
+                if attempt > 2:
+                    await _log(self.job_id,
+                               f"High-level parser failed on a page near #{offset_id} ({e}); "
+                               "switching this page to the safe raw parser.", "warn")
+                    return await self._raw_page(client, chat_id, offset_id, size)
+                await asyncio.sleep(2)
+
+    async def _raw_page(self, client, chat_id, offset_id: int, size: int) -> list:
+        """Fetch a page via raw MTProto and convert to lightweight shims that the
+        classifier understands. Never touches Pyrofork's Message binding, so it
+        cannot hit its parse bugs."""
+        while True:
+            try:
+                peer = await client.resolve_peer(chat_id)
+                r = await client.invoke(GetHistory(
+                    peer=peer, offset_id=offset_id, offset_date=0, add_offset=0,
+                    limit=size, max_id=0, min_id=0, hash=0))
+                users = {u.id: u for u in getattr(r, "users", []) or []}
+                return [_raw_to_shim(m, users) for m in (r.messages or [])]
+            except FloodWait as e:
+                secs = min(int(getattr(e, "value", None) or getattr(e, "seconds", 30)), 600)
+                await _log(self.job_id, f"Flood limit on raw read — sleeping {secs}s…", "warn")
+                await asyncio.sleep(secs + 1)
+
+
+def _raw_to_shim(m, users: dict):
+    """Convert a raw MTProto message into a SimpleNamespace exposing exactly the
+    attributes the classifier/report code reads."""
+    o = SimpleNamespace(
+        id=m.id, text=None, caption=None, photo=None, video=None, video_note=None,
+        animation=None, audio=None, voice=None, document=None, sticker=None,
+        poll=None, location=None, venue=None, contact=None, service=None,
+        from_user=None, date=None,
+    )
+    o.date = datetime.fromtimestamp(m.date, tz=timezone.utc) if getattr(m, "date", None) else None
+    if getattr(m, "action", None) is not None:
+        o.service = True
+    txt = getattr(m, "message", None) or None
+    media = getattr(m, "media", None)
+    if isinstance(media, raw_types.MessageMediaPhoto) and media.photo:
+        size = 0
+        try:
+            size = max((s.size for s in media.photo.sizes if hasattr(s, "size")), default=0)
+        except Exception:  # noqa: BLE001
+            pass
+        o.photo = SimpleNamespace(file_size=size)
+        o.caption = txt
+    elif isinstance(media, raw_types.MessageMediaDocument) and media.document:
+        doc = media.document
+        fsize = getattr(doc, "size", 0) or 0
+        fname = None
+        for a in (doc.attributes or []):
+            if isinstance(a, raw_types.DocumentAttributeFilename):
+                fname = a.file_name
+            elif isinstance(a, raw_types.DocumentAttributeAnimated):
+                o.animation = SimpleNamespace(file_size=fsize, duration=0, width=0, height=0, file_name=fname)
+            elif isinstance(a, raw_types.DocumentAttributeVideo):
+                if getattr(a, "round_message", False):
+                    o.video_note = SimpleNamespace(file_size=fsize, duration=getattr(a, "duration", 0),
+                                                   length=getattr(a, "w", 0))
+                else:
+                    o.video = SimpleNamespace(file_size=fsize, duration=getattr(a, "duration", 0),
+                                              width=getattr(a, "w", 0), height=getattr(a, "h", 0),
+                                              file_name=fname, supports_streaming=False)
+            elif isinstance(a, raw_types.DocumentAttributeAudio):
+                if getattr(a, "voice", False):
+                    o.voice = SimpleNamespace(file_size=fsize, duration=getattr(a, "duration", 0))
+                else:
+                    o.audio = SimpleNamespace(file_size=fsize, duration=getattr(a, "duration", 0),
+                                              title=getattr(a, "title", None),
+                                              performer=getattr(a, "performer", None), file_name=fname)
+            elif isinstance(a, raw_types.DocumentAttributeSticker):
+                o.sticker = SimpleNamespace(file_size=fsize)
+        if not any([o.video, o.video_note, o.animation, o.audio, o.voice, o.sticker]):
+            o.document = SimpleNamespace(file_size=fsize, file_name=fname)
+        o.caption = txt
+    elif isinstance(media, raw_types.MessageMediaPoll):
+        o.poll = SimpleNamespace(
+            question=media.poll.question,
+            options=[SimpleNamespace(text=x.text) for x in (media.poll.answers or [])])
+    elif isinstance(media, raw_types.MessageMediaContact):
+        o.contact = SimpleNamespace(phone_number=media.phone_number, first_name=media.first_name,
+                                    last_name=media.last_name or None)
+    elif isinstance(media, raw_types.MessageMediaGeo):
+        g = media.geo
+        o.location = SimpleNamespace(latitude=getattr(g, "lat", 0), longitude=getattr(g, "long", 0))
+    if o.text is None and txt and not o.caption:
+        o.text = txt
+    fid = getattr(m, "from_id", None)
+    if isinstance(fid, raw_types.PeerUser) and getattr(fid, "user_id", None) in users:
+        u = users[fid.user_id]
+        o.from_user = SimpleNamespace(id=u.id, first_name=getattr(u, "first_name", None),
+                                      last_name=getattr(u, "last_name", None),
+                                      username=getattr(u, "username", None))
+    return o
 
     async def _pages(self, client, chat_id, offset_id: int, page_size: int = 100):
         """Yield pages of messages older than offset_id, newest-first per page."""
@@ -188,13 +287,18 @@ class Engine:
 
         batch = []
         processed = job.get("processed") or 0
+        skipped = job.get("skipped") or 0
         last_id = job.get("last_msg_id") or 0
         last_logged = processed
 
         async for page in self._pages(client, source, last_id, page_size=500):
             for msg in page:
+                processed += 1
                 mtype = classify.message_type(msg)
                 text = classify.message_text(msg)
+                if not classify.should_copy(mtype, text, self.filters):
+                    skipped += 1  # outside the user's selection → not stored
+                    continue
                 batch.append({
                     "msg_id": msg.id,
                     "ts": msg.date.timestamp() if msg.date else 0,
@@ -204,11 +308,10 @@ class Engine:
                     "urls": classify.extract_links(text),
                     "preview": classify.message_preview(msg),
                 })
-                processed += 1
             await db.insert_index_rows(self.job_id, batch)
             batch.clear()
             last_id = page[-1].id
-            await db.update_job(self.job_id, processed=processed, last_msg_id=last_id)
+            await db.update_job(self.job_id, processed=processed, skipped=skipped, last_msg_id=last_id)
             await asyncio.sleep(0.1)  # gentle pacing — avoids triggering read flood limits
             if processed - last_logged >= 2000:
                 tot = job.get("total") or 0
@@ -217,7 +320,7 @@ class Engine:
             if await self._check_stop():
                 return
 
-        await db.update_job(self.job_id, processed=processed)
+        await db.update_job(self.job_id, processed=processed, skipped=skipped)
         await db.insert_index_rows(self.job_id, batch)
 
         spec = KINDS[self.kind]
