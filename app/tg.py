@@ -230,22 +230,27 @@ class TelegramManager:
         return out
 
     async def resolve_chat(self, target) -> dict:
-        """Resolve @username / invite link / numeric id into chat info."""
+        """Resolve @username / t.me link / invite link / numeric id into chat info."""
         client = await self.ensure()
-        target = str(target).strip()
-        if not target:
+        raw = str(target).strip()
+        if not raw:
             raise AuthError("Provide a chat link, @username or numeric ID.")
-        if target.lstrip("-").isdigit():
-            target = int(target)
-        try:
-            chat = await client.get_chat(target)
-        except (UsernameInvalid, UsernameNotOccupied):
-            raise AuthError(f"Chat not found: {target}. Check the @username or link.")
-        except AccessTokenInvalid:
-            raise AuthError("Invalid invite link.")
-        except Exception as e:  # noqa: BLE001
-            raise AuthError(_friendly(e, f"Could not open chat {target}")) from e
-        return _chat_dict(chat)
+
+        candidates = _target_candidates(raw)
+        last_err = None
+        for cand in candidates:
+            try:
+                chat = await client.get_chat(cand)
+                return _chat_dict(chat)
+            except (UsernameInvalid, UsernameNotOccupied):
+                last_err = AuthError(
+                    f"Chat not found: {raw}. Check the @username/link, and note private "
+                    "chats need an invite link (t.me/+…).")
+            except AccessTokenInvalid:
+                last_err = AuthError("Invalid invite link.")
+            except Exception as e:  # noqa: BLE001
+                last_err = AuthError(_friendly(e, f"Could not open chat {raw}"))
+        raise last_err or AuthError(f"Could not resolve: {raw}")
 
     # ------------------------------------------------------------- forum topics
 
@@ -283,6 +288,39 @@ class TelegramManager:
             return created.id
         except Exception as e:  # noqa: BLE001
             raise AuthError(_friendly(e, f"Could not create topic '{title}'")) from e
+
+
+def _target_candidates(raw: str) -> list:
+    """Turn user input (username, t.me link, invite link, id) into get_chat candidates.
+
+    Handles: @name · t.me/name · https://t.me/c/12345/67 (private web links) ·
+    t.me/+invite · bare numeric ids (tries the -100 channel form automatically).
+    """
+    import re as _re
+    t = raw.strip()
+    m = _re.search(r"(?:https?://)?t\.me/(.+)", t, _re.IGNORECASE)
+    if m:
+        rest = m.group(1).strip().strip("/")
+        if rest.lower().startswith("c/"):
+            parts = rest.split("/")
+            if len(parts) >= 2 and parts[1].isdigit():
+                return [int("-100" + parts[1])]
+        if rest.startswith("+") or rest.lower().startswith("joinchat/"):
+            return ["https://t.me/" + rest]
+        name = rest.split("/")[0].lstrip("@")
+        if name:
+            return ["@" + name]
+        return [t]
+    if t.lstrip("-").isdigit():
+        n = int(t)
+        out = [n]
+        if n > 0:  # probably a channel id pasted without the -100 prefix
+            out.append(int("-100" + t))
+        return out
+    if not t.startswith("@") and not t.startswith("-") and " " not in t and len(t) >= 4 \
+            and _re.fullmatch(r"[A-Za-z][A-Za-z0-9_]{3,}", t):
+        return ["@" + t, t]  # bare username
+    return [t]
 
 
 def _profile_dict(me) -> dict:

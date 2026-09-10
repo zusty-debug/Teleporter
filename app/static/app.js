@@ -415,6 +415,18 @@ function chatPicker(container, opts) {
   const results = container.querySelector(".picker-results");
   const selBox = container.querySelector(".chat-selected");
 
+  async function resolveDirect(q) {
+    results.classList.remove("hidden");
+    results.innerHTML = `<div class="pk-loading"><span class="spinner dark"></span> Resolving “${esc(q)}”…</div>`;
+    try {
+      const r = await api("/chats/resolve", "POST", { target: q });
+      toast(`Found: ${r.chat.title}`, "ok");
+      select(r.chat);
+    } catch (e) {
+      results.innerHTML = `<div class="pk-loading">⚠ ${esc(e.message)}</div>`;
+    }
+  }
+
   const search = debounce(async () => {
     const q = input.value.trim();
     if (!q || q.length < 1) { results.classList.add("hidden"); return; }
@@ -422,10 +434,11 @@ function chatPicker(container, opts) {
     results.innerHTML = `<div class="pk-loading"><span class="spinner dark"></span> Searching your chats…</div>`;
     try {
       const r = await api("/chats?q=" + encodeURIComponent(q));
+      let html = "";
       if (!r.chats.length) {
-        results.innerHTML = `<div class="picker-item"><span class="muted small">No matches in your chat list — you can still press Enter to use “${esc(q)}” directly.</span></div>`;
+        html += `<div class="pk-loading">No matches in your recent chat list — that's OK if you're not subscribed to it. Use the option below. 👇</div>`;
       } else {
-        results.innerHTML = r.chats.map((c) => `
+        html += r.chats.map((c) => `
           <div class="picker-item" data-id="${c.id}">
             <span class="pi-icon">${chatIcon(c.type, c.is_forum)}</span>
             <div class="grow">
@@ -433,13 +446,23 @@ function chatPicker(container, opts) {
               <div class="pi-sub">${c.type}${c.is_forum ? " · forum" : ""} · id ${c.id}${c.username ? " · @" + esc(c.username) : ""}</div>
             </div>
           </div>`).join("");
-        results.querySelectorAll(".picker-item[data-id]").forEach((el) => {
-          el.addEventListener("click", () => {
-            const chat = r.chats.find((c) => String(c.id) === el.dataset.id);
-            select(chat);
-          });
-        });
       }
+      // Always offer direct resolution for anything that looks like a username/link/id
+      html += `<div class="picker-item pk-direct" style="border-top:1px dashed var(--border2)">
+        <span class="pi-icon">🔎</span>
+        <div class="grow">
+          <div class="pi-title">Use “${esc(q)}” directly</div>
+          <div class="pi-sub">works for @usernames, t.me links, invite links and -100… IDs — even chats not in your list</div>
+        </div>
+      </div>`;
+      results.innerHTML = html;
+      results.querySelectorAll(".picker-item[data-id]").forEach((el) => {
+        el.addEventListener("click", () => {
+          const chat = r.chats.find((c) => String(c.id) === el.dataset.id);
+          select(chat);
+        });
+      });
+      results.querySelector(".pk-direct").addEventListener("click", () => resolveDirect(q));
       results.classList.remove("hidden");
     } catch (e) {
       results.innerHTML = `<div class="pk-loading">⚠ ${esc(e.message)}</div>`;
@@ -451,7 +474,7 @@ function chatPicker(container, opts) {
   input.addEventListener("keydown", (e) => {
     if (e.key === "Enter" && input.value.trim()) {
       e.preventDefault();
-      select({ raw: input.value.trim(), title: input.value.trim(), id: input.value.trim(), type: "?" });
+      resolveDirect(input.value.trim());
     }
   });
 
