@@ -97,7 +97,17 @@ async function api(path, method = "GET", body, opts = {}) {
     if (r.status === 401) { showPasswordModal(); throw new Error("unauthorized"); }
     let data = {};
     try { data = await r.json(); } catch (_) { /* empty */ }
-    if (!r.ok) throw new Error(data.detail || r.statusText || "Request failed");
+    if (!r.ok) {
+      let detail = data.detail;
+      if (typeof detail !== "string") {
+        try {
+          detail = Array.isArray(detail)
+            ? detail.map((x) => (x && x.msg) || JSON.stringify(x)).join(" · ")
+            : JSON.stringify(detail);
+        } catch (_) { detail = String(detail); }
+      }
+      throw new Error(detail || r.statusText || "Request failed");
+    }
     return data;
   } finally {
     if (!opts.quiet) netDone();
@@ -397,7 +407,9 @@ function renderAuth() {
   });
 }
 $("#auth-continue").addEventListener("click", () => {
-  if (S.boot.authenticated) goSetup();
+  if (!S.boot.authenticated) return;
+  if (S.kind) goSetup();
+  else { toast("You're connected! Now pick an operation 👇", "ok"); showView("ops"); }
 });
 
 // ------------------------------------------------------------------ chat picker
@@ -502,6 +514,11 @@ function chatPicker(container, opts) {
 
 // ------------------------------------------------------------------ setup view
 function goSetup() {
+  if (!S.kind || !(S.boot.kinds || {})[S.kind]) {
+    toast("Pick an operation first (e.g. Index Only) 👇");
+    showView("ops");
+    return;
+  }
   showView("setup");
   const spec = (S.boot.kinds || {})[S.kind] || {};
   $("#setup-title").textContent = spec.label || S.kind;
