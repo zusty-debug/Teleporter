@@ -215,7 +215,7 @@ class TelegramManager:
         try:
             async for dialog in client.get_dialogs(limit=500):
                 chat = dialog.chat
-                if _chat_type(chat) not in ("group", "supergroup", "channel"):
+                if _chat_type(chat) not in ("group", "supergroup", "channel", "forum"):
                     continue
                 info = _chat_dict(chat)
                 if q:

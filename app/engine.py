@@ -37,25 +37,29 @@ engines: dict = {}
 
 
 def validate_kind_chat(kind: str, role: str, chat: dict) -> Optional[str]:
-    """Return an error string if the resolved chat doesn't fit the job kind, else None."""
+    """Return an error string if the resolved chat doesn't fit the job kind, else None.
+
+    Note: pyrofork reports topic-enabled supergroups as type "forum".
+    """
     spec = KINDS.get(kind)
     if not spec:
         return f"Unknown operation kind: {kind}"
     need = spec["source"] if role == "source" else spec["dest"]
     ctype = chat.get("type")
+    is_forum = bool(chat.get("is_forum")) or ctype == "forum"
+    group_types = {"group", "supergroup", "forum"}
     if need is None:
         return None
     if need == "channel":
         if ctype != "channel":
             return f"The {'source' if role == 'source' else 'destination'} must be a channel, got '{ctype}'."
     elif need == "group":
-        if ctype not in ("group", "supergroup") or (role == "dest" and chat.get("is_forum")):
-            if ctype not in ("group", "supergroup"):
-                return f"The {'source' if role == 'source' else 'destination'} must be a group, got '{ctype}'."
-            if chat.get("is_forum"):
-                return "That group has Topics enabled — pick the '→ Forum Topics' operation instead."
+        if ctype not in group_types:
+            return f"The {'source' if role == 'source' else 'destination'} must be a group, got '{ctype}'."
+        if role == "dest" and is_forum:
+            return "That group has Topics enabled — pick the '→ Forum Topics' operation instead."
     elif need == "forum":
-        if ctype != "supergroup" or not chat.get("is_forum"):
+        if not (ctype == "forum" or (ctype == "supergroup" and is_forum)):
             return "The destination must be a supergroup with Topics enabled (a forum)."
     return None
 

@@ -461,7 +461,7 @@ function chatPicker(container, opts) {
             <span class="pi-icon">${chatIcon(c.type, c.is_forum)}</span>
             <div class="grow">
               <div class="pi-title">${esc(c.title)}</div>
-              <div class="pi-sub">${c.type}${c.is_forum ? " · forum" : ""} · id ${c.id}${c.username ? " · @" + esc(c.username) : ""}</div>
+              <div class="pi-sub">${c.is_forum ? "forum" : c.type} · id ${c.id}${c.username ? " · @" + esc(c.username) : ""}</div>
             </div>
           </div>`).join("");
       }
