@@ -215,7 +215,7 @@ class TelegramManager:
         try:
             async for dialog in client.get_dialogs(limit=500):
                 chat = dialog.chat
-                if chat.type not in ("group", "supergroup", "channel"):
+                if _chat_type(chat) not in ("group", "supergroup", "channel"):
                     continue
                 info = _chat_dict(chat)
                 if q:
@@ -337,11 +337,17 @@ def _profile_dict(me) -> dict:
     }
 
 
+def _chat_type(chat) -> str:
+    """Plain string chat type (pyrofork returns a ChatType enum)."""
+    t = getattr(chat, "type", None)
+    return getattr(t, "value", t) or ""
+
+
 def _chat_dict(chat) -> dict:
     return {
         "id": chat.id,
         "title": getattr(chat, "title", None) or getattr(chat, "username", None) or str(chat.id),
-        "type": chat.type,  # group | supergroup | channel
+        "type": _chat_type(chat),  # group | supergroup | channel
         "username": getattr(chat, "username", None) or "",
         "is_forum": bool(getattr(chat, "is_forum", False)),
         "members_count": getattr(chat, "members_count", None),
