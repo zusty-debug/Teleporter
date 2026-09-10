@@ -1,6 +1,7 @@
 fastapi>=0.110
 uvicorn[standard]>=0.29
 pyrofork>=2.3.60
-tgcrypto>=1.2.5
 aiosqlite>=0.20
 python-dotenv>=1.0
+# tgcrypto intentionally omitted: optional crypto speedup, source-only on
+# Python 3.12 (no wheels) — breaks slim-image builds. Pyrogram works fine without it.
