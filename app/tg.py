@@ -277,13 +277,30 @@ class TelegramManager:
 
     # ------------------------------------------------------------- forum topics
 
+    @staticmethod
+    def _forum_raw():
+        """Raw forum-topic classes. Schema layer moved them channels→messages and
+        renamed 'channel'→'peer'; support both layouts."""
+        try:
+            from pyrogram.raw.functions.messages import CreateForumTopic, GetForumTopics
+            return CreateForumTopic, GetForumTopics, "peer"
+        except ImportError:  # older layer
+            from pyrogram.raw.functions.channels import CreateForumTopic, GetForumTopics
+            return CreateForumTopic, GetForumTopics, "channel"
+
     async def get_topics(self, chat_id) -> list:
         client = await self.ensure()
         try:
-            topics = await client.get_forum_topics(chat_id, limit=200)
-        except Exception as e:  # noqa: BLE001
-            raise AuthError(_friendly(e, "Could not read forum topics")) from e
-        out = [{"id": t.id, "title": t.title} for t in topics]
+            _, GetForumTopics, peer_key = self._forum_raw()
+            peer = await client.resolve_peer(chat_id)
+            r = await client.invoke(GetForumTopics(**{peer_key: peer}, limit=200))
+            out = [{"id": t.id, "title": t.title} for t in (getattr(r, "topics", None) or [])]
+        except Exception:  # noqa: BLE001
+            try:
+                topics = await client.get_forum_topics(chat_id, limit=200)
+                out = [{"id": t.id, "title": t.title} for t in topics]
+            except Exception as e:  # noqa: BLE001
+                raise AuthError(_friendly(e, "Could not read forum topics")) from e
         if not any(t["id"] == 1 for t in out):
             out.insert(0, {"id": 1, "title": "General"})
         return out
@@ -296,19 +313,26 @@ class TelegramManager:
             cache[title] = 1
             return 1
         client = await self.ensure()
+        peer = await client.resolve_peer(chat_id)
+        CreateForumTopic, GetForumTopics, peer_key = self._forum_raw()
         # look among existing topics first
         try:
-            topics = await client.get_forum_topics(chat_id, limit=200)
-            for t in topics:
+            r = await client.invoke(GetForumTopics(**{peer_key: peer}, limit=200))
+            for t in (getattr(r, "topics", None) or []):
                 cache[t.title] = t.id
                 if t.title == title:
                     return t.id
         except Exception:  # noqa: BLE001
             pass
         try:
-            created = await client.create_forum_topic(chat_id, title)
-            cache[title] = created.id
-            return created.id
+            import random
+            created = await client.invoke(CreateForumTopic(
+                **{peer_key: peer}, title=title, random_id=random.getrandbits(63)))
+            tid = getattr(created, "id", None)
+            if tid is None:
+                raise RuntimeError("create returned no topic id")
+            cache[title] = tid
+            return tid
         except Exception as e:  # noqa: BLE001
             raise AuthError(_friendly(e, f"Could not create topic '{title}'")) from e
 
