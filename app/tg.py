@@ -293,7 +293,7 @@ class TelegramManager:
         try:
             _, GetForumTopics, peer_key = self._forum_raw()
             peer = await client.resolve_peer(chat_id)
-            r = await client.invoke(GetForumTopics(**{peer_key: peer}, limit=200))
+            r = await client.invoke(GetForumTopics(**{peer_key: peer}, offset_date=0, offset_id=0, offset_topic=0, limit=200))
             out = [{"id": t.id, "title": t.title} for t in (getattr(r, "topics", None) or [])]
         except Exception:  # noqa: BLE001
             try:
@@ -317,7 +317,7 @@ class TelegramManager:
         CreateForumTopic, GetForumTopics, peer_key = self._forum_raw()
         # look among existing topics first
         try:
-            r = await client.invoke(GetForumTopics(**{peer_key: peer}, limit=200))
+            r = await client.invoke(GetForumTopics(**{peer_key: peer}, offset_date=0, offset_id=0, offset_topic=0, limit=200))
             for t in (getattr(r, "topics", None) or []):
                 cache[t.title] = t.id
                 if t.title == title:
